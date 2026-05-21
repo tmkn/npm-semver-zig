@@ -17,11 +17,30 @@ pub const Part = union(enum) {
     }
 };
 
+pub const PrereleaseIdentifier = union(enum) {
+    numeric: u32,
+    text: []const u8,
+
+    pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        switch (self) {
+            .numeric => |val| {
+                try writer.print("{d}", .{val});
+            },
+            .text => |val| {
+                try writer.print("{s}", .{val});
+            },
+        }
+    }
+};
+
 // TODO: use std.math.order for sort
 pub const Version = struct {
     major: Part,
     minor: ?Part = null,
     patch: ?Part = null,
+
+    prerelease: ?[]const PrereleaseIdentifier = null,
+    metadata: ?[]const []const u8 = null,
 
     pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
         try writer.print("{f}", .{self.major});
@@ -36,6 +55,30 @@ pub const Version = struct {
             try writer.print(".{f}", .{p});
         } else {
             try writer.print(".*", .{});
+        }
+
+        if (self.prerelease != null and self.prerelease.?.len > 0) {
+            try writer.writeByte('-');
+
+            for (self.prerelease.?, 0..) |val, index| {
+                if (index != 0) {
+                    try writer.writeByte('.');
+                }
+
+                try writer.print("{f}", .{val});
+            }
+        }
+
+        if (self.metadata != null and self.metadata.?.len > 0) {
+            try writer.writeByte('+');
+
+            for (self.metadata.?, 0..) |val, index| {
+                if (index != 0) {
+                    try writer.writeByte('.');
+                }
+
+                try writer.print("{s}", .{val});
+            }
         }
     }
 };
@@ -67,7 +110,7 @@ pub const Node = union(enum) {
     }
 };
 
-const BinaryExpression = struct {
+pub const BinaryExpression = struct {
     op: BinaryOp,
     left: *const Node,
     right: *const Node,
@@ -110,6 +153,16 @@ pub const Parser = struct {
 
     fn skipWhitespace(self: *Parser) void {
         while (self.match(.whitespace)) {}
+    }
+
+    fn consumeUntil(self: *Parser, stopTag: std.meta.Tag(Token)) []const Token {
+        const start = self.current;
+
+        while ((std.meta.activeTag(self.peek()) != stopTag) and (std.meta.activeTag(self.peek()) != .eof)) {
+            self.advance();
+        }
+
+        return self.tokens[start..self.current];
     }
 
     pub fn parse(self: *Parser) !*Node {
@@ -196,6 +249,77 @@ pub const Parser = struct {
         }
     }
 
+    pub fn parsePrerelease(self: *Parser) !?[]const PrereleaseIdentifier {
+        if (self.peek() == .dash) {
+            self.advance();
+
+            const prereleaseTokens = self.consumeUntil(.plus);
+
+            var list: std.ArrayList(PrereleaseIdentifier) = .empty;
+            errdefer list.deinit(self.allocator);
+
+            for (prereleaseTokens) |token| {
+                switch (token) {
+                    .text => |text| {
+                        try list.append(self.allocator, .{ .text = text });
+                    },
+                    .number => |number| {
+                        if (number[0] == '0') {
+                            return error.InvalidPrereleaseNumber;
+                        }
+
+                        const value = try std.fmt.parseInt(u16, number, 10);
+
+                        try list.append(self.allocator, .{ .numeric = value });
+                    },
+                    .dot => continue,
+                    // unexpected token, should error instead?
+                    else => return null,
+                }
+            }
+
+            if (list.items.len > 0) {
+                return try list.toOwnedSlice(self.allocator);
+            } else {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    pub fn parseMetadata(self: *Parser) !?[]const []const u8 {
+        if (self.peek() == .plus) {
+            self.advance();
+
+            const metadataTokens = self.consumeUntil(.whitespace);
+
+            var list: std.ArrayList([]const u8) = .empty;
+            errdefer list.deinit(self.allocator);
+
+            for (metadataTokens) |token| {
+                switch (token) {
+                    .text => |text| {
+                        try list.append(self.allocator, text);
+                    },
+                    .number => |number| {
+                        try list.append(self.allocator, number);
+                    },
+                    .dot => continue,
+                    else => return null,
+                }
+            }
+
+            if (list.items.len > 0) {
+                return try list.toOwnedSlice(self.allocator);
+            } else {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
     pub fn parseVersion(self: *Parser) !*Node {
         const node = try self.allocator.create(Node);
         const comp = self.parseComparator() orelse .eq;
@@ -242,6 +366,10 @@ pub const Parser = struct {
                     .major = major,
                     .minor = minor,
                     .patch = patch,
+
+                    // prerelease & metadata can only come after patch version
+                    .prerelease = try self.parsePrerelease(),
+                    .metadata = try self.parseMetadata(),
                 },
             },
         };
@@ -380,6 +508,119 @@ test "parser tests" {
                         },
                         .patch = Part{
                             .number = 30,
+                        },
+                    },
+                },
+            },
+        },
+
+        // 1.2.3-rc.1
+        .{
+            .input = &[_]Token{
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+
+                .dash,
+
+                .{ .text = "rc" },
+                .dot,
+                .{ .number = "1" },
+                .eof,
+            },
+
+            .output = &Node{
+                .comparator = .{
+                    .op = Comparator.eq,
+                    .version = .{
+                        .major = .{ .number = 1 },
+                        .minor = .{ .number = 2 },
+                        .patch = .{ .number = 3 },
+
+                        .prerelease = &.{
+                            .{ .text = "rc" },
+                            .{ .numeric = 1 },
+                        },
+                    },
+                },
+            },
+        },
+
+        // 1.2.3+sha.abc
+        .{
+            .input = &[_]Token{
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+
+                .plus,
+
+                .{ .text = "sha" },
+                .dot,
+                .{ .text = "abc" },
+                .eof,
+            },
+
+            .output = &Node{
+                .comparator = .{
+                    .op = Comparator.eq,
+                    .version = .{
+                        .major = .{ .number = 1 },
+                        .minor = .{ .number = 2 },
+                        .patch = .{ .number = 3 },
+
+                        .metadata = &.{
+                            "sha",
+                            "abc",
+                        },
+                    },
+                },
+            },
+        },
+
+        // 1.2.3-rc.1+sha.abc
+        .{
+            .input = &[_]Token{
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+
+                .dash,
+
+                .{ .text = "rc" },
+                .dot,
+                .{ .number = "1" },
+
+                .plus,
+
+                .{ .text = "sha" },
+                .dot,
+                .{ .text = "abc" },
+                .eof,
+            },
+
+            .output = &Node{
+                .comparator = .{
+                    .op = Comparator.eq,
+                    .version = .{
+                        .major = .{ .number = 1 },
+                        .minor = .{ .number = 2 },
+                        .patch = .{ .number = 3 },
+
+                        .prerelease = &.{
+                            .{ .text = "rc" },
+                            .{ .numeric = 1 },
+                        },
+
+                        .metadata = &.{
+                            "sha",
+                            "abc",
                         },
                     },
                 },
@@ -723,6 +964,32 @@ test "parser tests" {
         },
     };
 
+    const ErrorTestcase = struct {
+        input: []const Token,
+        output: anyerror,
+    };
+
+    const error_cases = [_]ErrorTestcase{
+        .{
+            // 1.2.3-001
+            // invalid: prerelease numeric identifiers must not contain leading zeroes
+            .input = &[_]Token{
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+
+                .dash,
+
+                .{ .number = "001" },
+                .eof,
+            },
+
+            .output = error.InvalidPrereleaseNumber,
+        },
+    };
+
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
 
@@ -731,8 +998,12 @@ test "parser tests" {
     for (cases) |case| {
         var parser = Parser.init(allocator, case.input);
 
-        const ast = parser.parse();
+        try std.testing.expectEqualDeep(case.output, parser.parse());
+    }
 
-        try std.testing.expectEqualDeep(case.output, ast);
+    for (error_cases) |case| {
+        var parser = Parser.init(allocator, case.input);
+
+        try std.testing.expectError(case.output, parser.parse());
     }
 }
