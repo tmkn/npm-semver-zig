@@ -5,7 +5,7 @@ pub const UnknownInput = struct {
     pos: usize,
 };
 
-const Comparator = enum {
+pub const Comparator = enum {
     eq,
     gt,
     lt,
@@ -23,7 +23,7 @@ pub const Token = union(enum) {
     dash,
     plus,
     whitespace: []const u8,
-    logical_and,
+    logical_and, // TODO: remove, its not needed
     logical_or,
     comparator: Comparator,
     eof,
@@ -111,6 +111,7 @@ pub const Lexer = struct {
                     break :blk .{ .comparator = Comparator.eq };
                 },
                 '&' => blk: {
+                    // TODO: remove, && is invalid syntax
                     if (self.peek() == '&') {
                         self.current_pos += 2;
 
@@ -474,6 +475,164 @@ test "lexer tests" {
                 .{ .number = "0" },
                 .dot,
                 .{ .number = "0" },
+                .eof,
+            },
+        },
+
+        // Logical AND
+        .{
+            .input = ">=1.2.3 <2.0.0",
+            .expected = &[_]Token{
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.lt },
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+                .eof,
+            },
+        },
+        .{
+            .input = ">=1.2.3 <2.0.0",
+            .expected = &[_]Token{
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.lt },
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+
+                .eof,
+            },
+        },
+        .{
+            .input = ">=1.2.3-0 <2.0.0",
+            .expected = &[_]Token{
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+                .dash,
+                .{ .number = "0" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.lt },
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+
+                .eof,
+            },
+        },
+        .{
+            .input = "1.x >=1.2.0",
+            .expected = &[_]Token{
+                .{ .number = "1" },
+                .dot,
+                .{ .text = "x" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+
+                .eof,
+            },
+        },
+        .{
+            .input = "~1.2 >=1.2.3",
+            .expected = &[_]Token{
+                .tilde,
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "3" },
+                .eof,
+            },
+        },
+        .{
+            .input = ">=1.0.0 <2.0.0 >=1.5.0",
+            .expected = &[_]Token{
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.lt },
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+                .{ .whitespace = " " },
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "5" },
+                .dot,
+                .{ .number = "0" },
+                .eof,
+            },
+        },
+        .{
+            .input = ">=1.0.0 <2.0.0 || >=3.0.0",
+            .expected = &[_]Token{
+                .{ .comparator = Comparator.gte },
+                .{ .number = "1" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+
+                .{ .whitespace = " " },
+
+                .{ .comparator = Comparator.lt },
+                .{ .number = "2" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+
+                .{ .whitespace = " " },
+
+                .logical_or,
+
+                .{ .whitespace = " " },
+
+                .{ .comparator = Comparator.gte },
+                .{ .number = "3" },
+                .dot,
+                .{ .number = "0" },
+                .dot,
+                .{ .number = "0" },
+
                 .eof,
             },
         },
