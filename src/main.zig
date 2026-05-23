@@ -11,7 +11,8 @@ const Comparator = npm_semver_zig.Comparator;
 pub fn main() !void {
     // const input = "1.2.3-alpha+build.1||2.0.0";
     // const input = ">=1.0.0 <2.0.0 || >=3.0.0";
-    const input = "1.2.3-rc.1+sha.abc";
+    // const input = "1.2.3-rc.1+sha.abc";
+    const input = "1.2.3 - 2.3.4";
     var myLexer = Lexer.init(input);
     var buffer: [100]Token = undefined;
 
