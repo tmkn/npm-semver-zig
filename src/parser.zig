@@ -207,13 +207,14 @@ pub const Parser = struct {
 
         const left = try self.parseVersion();
 
-        // Whitespace here might be an implicit AND separator or it formatting padding
+        // Whitespace here might be an implicit AND separator, start of a range or just formatting padding
         self.skipWhitespace();
 
         // Determine which it is
         switch (self.peek()) {
+            // Implicit AND
             .number, .wildcard, .comparator => {
-                const right = try self.parseAnd();
+                const right = try self.parseVersion();
 
                 ptr.* = .{
                     .binary = .{
@@ -223,6 +224,24 @@ pub const Parser = struct {
                     },
                 };
             },
+            // Range
+            .dash => {
+                self.advance();
+                self.skipWhitespace();
+
+                const right = try self.parseVersion();
+
+                // TODO: convert to range
+
+                ptr.* = .{
+                    .binary = .{
+                        .op = .logical_and,
+                        .left = left,
+                        .right = right,
+                    },
+                };
+            },
+            // just padding
             else => {
                 ptr = left;
             },
@@ -962,6 +981,236 @@ test "parser tests" {
                 },
             },
         },
+
+        // RANGES
+        // 1.2.3 - 2.3.4
+        // .{
+        //     .input = &[_]Token{
+        //         .{ .number = "1" },
+        //         .dot,
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .{ .whitespace = " " },
+        //         .dash,
+        //         .{ .whitespace = " " },
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .dot,
+        //         .{ .number = "4" },
+        //         .eof,
+        //     },
+        //     .output = &Node{
+        //         .binary = .{
+        //             .op = .logical_and,
+        //             .left = &Node{
+        //                 .comparator = .{
+        //                     .op = .gte,
+        //                     .version = .{
+        //                         .major = .{ .number = 1 },
+        //                         .minor = .{ .number = 2 },
+        //                         .patch = .{ .number = 3 },
+        //                     },
+        //                 },
+        //             },
+        //             .right = &Node{
+        //                 .comparator = .{
+        //                     .op = .lte,
+        //                     .version = .{
+        //                         .major = .{ .number = 2 },
+        //                         .minor = .{ .number = 3 },
+        //                         .patch = .{ .number = 4 },
+        //                     },
+        //                 },
+        //             },
+        //         },
+        //     },
+        // },
+
+        // // 1.2 - 2.3.4  => left expands to 1.2.0
+        // .{
+        //     .input = &[_]Token{
+        //         .{ .number = "1" },
+        //         .dot,
+        //         .{ .number = "2" },
+        //         .{ .whitespace = " " },
+        //         .dash,
+        //         .{ .whitespace = " " },
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .dot,
+        //         .{ .number = "4" },
+        //         .eof,
+        //     },
+        //     .output = &Node{
+        //         .binary = .{
+        //             .op = .logical_and,
+        //             .left = &Node{
+        //                 .comparator = .{
+        //                     .op = .gte,
+        //                     .version = .{
+        //                         .major = .{ .number = 1 },
+        //                         .minor = .{ .number = 2 },
+        //                         .patch = .{ .number = 0 },
+        //                     },
+        //                 },
+        //             },
+        //             .right = &Node{
+        //                 .comparator = .{
+        //                     .op = .lte,
+        //                     .version = .{
+        //                         .major = .{ .number = 2 },
+        //                         .minor = .{ .number = 3 },
+        //                         .patch = .{ .number = 4 },
+        //                     },
+        //                 },
+        //             },
+        //         },
+        //     },
+        // },
+
+        // // 1.2.3 - 2.3 => right becomes <2.4.0
+        // .{
+        //     .input = &[_]Token{
+        //         .{ .number = "1" },
+        //         .dot,
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .{ .whitespace = " " },
+        //         .dash,
+        //         .{ .whitespace = " " },
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .eof,
+        //     },
+        //     .output = &Node{
+        //         .binary = .{
+        //             .op = .logical_and,
+        //             .left = &Node{
+        //                 .comparator = .{
+        //                     .op = .gte,
+        //                     .version = .{
+        //                         .major = .{ .number = 1 },
+        //                         .minor = .{ .number = 2 },
+        //                         .patch = .{ .number = 3 },
+        //                     },
+        //                 },
+        //             },
+        //             .right = &Node{
+        //                 .comparator = .{
+        //                     .op = .lt,
+        //                     .version = .{
+        //                         .major = .{ .number = 2 },
+        //                         .minor = .{ .number = 4 },
+        //                         .patch = .{ .number = 0 },
+        //                     },
+        //                 },
+        //             },
+        //         },
+        //     },
+        // },
+
+        // // 1 - 2 => 1.0.0 - <3.0.0
+        // .{
+        //     .input = &[_]Token{
+        //         .{ .number = "1" },
+        //         .{ .whitespace = " " },
+        //         .dash,
+        //         .{ .whitespace = " " },
+        //         .{ .number = "2" },
+        //         .eof,
+        //     },
+        //     .output = &Node{
+        //         .binary = .{
+        //             .op = .logical_and,
+        //             .left = &Node{
+        //                 .comparator = .{
+        //                     .op = .gte,
+        //                     .version = .{
+        //                         .major = .{ .number = 1 },
+        //                         .minor = .{ .number = 0 },
+        //                         .patch = .{ .number = 0 },
+        //                     },
+        //                 },
+        //             },
+        //             .right = &Node{
+        //                 .comparator = .{
+        //                     .op = .lt,
+        //                     .version = .{
+        //                         .major = .{ .number = 3 },
+        //                         .minor = .{ .number = 0 },
+        //                         .patch = .{ .number = 0 },
+        //                     },
+        //                 },
+        //             },
+        //         },
+        //     },
+        // },
+
+        // // 1.2.3-alpha.1 - 2.0.0-beta.2
+        // .{
+        //     .input = &[_]Token{
+        //         .{ .number = "1" },
+        //         .dot,
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "3" },
+        //         .dash,
+        //         .{ .text = "alpha" },
+        //         .dot,
+        //         .{ .number = "1" },
+        //         .{ .whitespace = " " },
+        //         .dash,
+        //         .{ .whitespace = " " },
+        //         .{ .number = "2" },
+        //         .dot,
+        //         .{ .number = "0" },
+        //         .dot,
+        //         .{ .number = "0" },
+        //         .dash,
+        //         .{ .text = "beta" },
+        //         .dot,
+        //         .{ .number = "2" },
+        //         .eof,
+        //     },
+        //     .output = &Node{
+        //         .binary = .{
+        //             .op = .logical_and,
+        //             .left = &Node{
+        //                 .comparator = .{
+        //                     .op = .gte,
+        //                     .version = .{
+        //                         .major = .{ .number = 1 },
+        //                         .minor = .{ .number = 2 },
+        //                         .patch = .{ .number = 3 },
+        //                         .prerelease = &.{
+        //                             .{ .text = "alpha" },
+        //                             .{ .numeric = 1 },
+        //                         },
+        //                     },
+        //                 },
+        //             },
+        //             .right = &Node{
+        //                 .comparator = .{
+        //                     .op = .lte,
+        //                     .version = .{
+        //                         .major = .{ .number = 2 },
+        //                         .minor = .{ .number = 0 },
+        //                         .patch = .{ .number = 0 },
+        //                         .prerelease = &.{
+        //                             .{ .text = "beta" },
+        //                             .{ .numeric = 2 },
+        //                         },
+        //                     },
+        //                 },
+        //             },
+        //         },
+        //     },
+        // },
     };
 
     const ErrorTestcase = struct {
