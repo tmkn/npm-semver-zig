@@ -23,7 +23,6 @@ pub const Token = union(enum) {
     dash,
     plus,
     whitespace: []const u8,
-    logical_and, // TODO: remove, its not needed
     logical_or,
     comparator: Comparator,
     eof,
@@ -109,18 +108,6 @@ pub const Lexer = struct {
                     self.current_pos += 1;
 
                     break :blk .{ .comparator = Comparator.eq };
-                },
-                '&' => blk: {
-                    // TODO: remove, && is invalid syntax
-                    if (self.peek() == '&') {
-                        self.current_pos += 2;
-
-                        break :blk Token.logical_and;
-                    } else {
-                        self.current_pos += 1;
-
-                        break :blk Token{ .unknown = .{ .c = c, .pos = self.current_pos - 1 } };
-                    }
                 },
                 '|' => blk: {
                     if (self.peek() == '|') {
